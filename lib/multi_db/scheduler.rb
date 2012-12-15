@@ -31,6 +31,11 @@ module MultiDb
       current
     end
     
+    # Reset all blacklist, used internaly after reconnect
+    def reset_blacklist
+      @blacklist = Array.new(@n, Time.at(0))
+    end
+
     protected
     
     def next_index!

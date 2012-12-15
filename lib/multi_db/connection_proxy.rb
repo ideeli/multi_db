@@ -66,7 +66,18 @@ module MultiDb
               MultiDb.module_eval %Q{
                 class #{$1.camelize} < ActiveRecord::Base
                   self.abstract_class = true
-                  establish_connection :#{name}
+                  begin
+                    Timeout.timeout(2) do
+                      establish_connection '#{name}'.to_sym
+                    end
+                  rescue Timeout::Error => e
+                    configuration = ActiveRecord::Base.configurations["#{name}"]
+                    host_username = configuration['host'] + '/' + configuration['username']
+                    logger.info "Timeout occured while trying to establish connection to " + host_username + ": " + e.message
+                    flags_dir = Rails.root.join('log/flags')
+                    FileUtils.mkdir(flags_dir) unless File.exists?(flags_dir)
+                    FileUtils.touch(flags_dir.join(configuration['host'] + "_timeout"))
+                  end
                 end
               }, __FILE__, __LINE__
               slaves << "MultiDb::#{$1.camelize}".constantize
@@ -122,6 +133,34 @@ module MultiDb
       self.current = @master
     end
 
+    # Go through all slaves and drop connection for each
+    def disconnect_slaves!
+      @slaves.instance_variable_get(:@items).each do |slave|
+        conn = slave.retrieve_connection if slave.respond_to?(:retrieve_connection)
+        if conn.respond_to?(:disconnect!)
+          conn.disconnect!
+          logger.warn "[MULTIDB] Disconnecting slave #{slave}"
+        else
+          logger.warn "[MULTIDB] Failed to disconnect slave #{slave}, no connection found"
+        end
+      end
+    end
+
+    # Go through all slaves and trigger reconnect for each of them
+    def reconnect_slaves!
+      @slaves.instance_variable_get(:@items).each do |slave|
+        conn = slave.retrieve_connection if slave.respond_to?(:retrieve_connection)
+        if conn.respond_to?(:reconnect!)
+          conn.reconnect!
+          logger.warn "[MULTIDB] Reconnecting slave #{slave}"
+        else
+          logger.warn "[MULTIDB] Failed to reconnect to slave #{slave}, no connection found"
+        end
+      end
+      @slaves.reset_blacklist
+      true
+    end
+
     protected
 
     def create_delegation_method!(method)
@@ -162,7 +201,7 @@ module MultiDb
       @master.retrieve_connection.reconnect!
       @reconnect = false
     end
-    
+
     def raise_master_error(error)
       logger.fatal "[MULTIDB] Error accessing master database. Scheduling reconnect"
       @reconnect = true

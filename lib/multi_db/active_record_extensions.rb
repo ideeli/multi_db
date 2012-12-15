@@ -13,17 +13,17 @@ module MultiDb
 
     module InstanceMethods
       def reload_with_master(*args, &block)
-        self.connection_proxy.with_master { reload_without_master }
+        self.connection_proxy.with_master { reload_without_master(*args, &block) }
       end
     end
 
     module ClassMethods
       # Make sure transactions always switch to the master
-      def transaction(&block)
+      def transaction(options = {}, &block)
         if self.connection.kind_of?(ConnectionProxy)
-          super
+          super(options)
         else
-          self.connection_proxy.with_master { super }
+          self.connection_proxy.with_master { super(options) }
         end
       end
 
